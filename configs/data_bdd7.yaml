@@ -1,0 +1,5 @@
+path: /home/ubuntu/yolo26-bdd-vehicle-ped/datasets/bdd7
+train: images/train
+val: images/val
+nc: 7
+names: [person, rider, car, bus, truck, bicycle, motorcycle]
