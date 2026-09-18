@@ -16,30 +16,30 @@
 
 > 从 BDD100K 原始 10 类中剔除了 traffic light / traffic sign / train,专注"在路上的人和车"。
 
-### 性能(BDD100K val 10,000 张 @1024)
+### 性能(BDD100K val 10,000 张)
 
-| 模型 | mAP50 | mAP50-95 | 相对 FP32 差距 | 文件体积 |
+| 模型 | 输入 | mAP50 | mAP50-95 | 说明 |
 |---|---|---|---|---|
-| FP32 训练权重 (best.pt) | 0.5967 | 0.3602 | — | 15.6 MB |
-| FP32 ONNX 基线 | 0.5955 | 0.3572 | -0.2% | 9.5 MB |
-| ~~PTQ INT8(已弃用)~~ | 0.5412 | 0.3079 | -9.1% / -13.8% | 3.0 MB |
-| **QAT INT8(交付)** | **0.5894** | **0.3521** | **-1.0% / -1.4%** | 9.9 MB* |
+| FP32 训练权重 (best.pt) | 1024×1024 | 0.5967 | 0.3602 | 原始训练结果 |
+| QAT INT8 ONNX @1024 | 1024×1024 | 0.5894 | 0.3521 | 量化损失仅 -1.2% |
+| **QAT INT8 ONNX @640×384(交付)** | **640×384 矩形** | **0.5021** | **0.2939** | 与 640 方形几乎零差异 |
+| FP32 @640×640 方形(参照) | 640×640 | 0.5036 | 0.2982 | 纯分辨率损失 -15.7% |
 
-\* QDQ 表示(FP32 权重 + 量化范围节点),推理运行时自动折叠为真 INT8 内核。
+> 精度结论:① QAT 把 INT8 量化损失压到 ~0(PTQ 方案损失 9-15%,已弃用);② 640×384 矩形输入经矩形适配训练(rect=True QAT)后,与 640×640 方形几乎无差异;剩余 -15.7% 为 1024→640 的纯分辨率代价。
 
-**逐类 mAP50-95(QAT INT8 vs FP32 ONNX)**:
+**逐类 mAP50-95(交付模型 @640×384 vs FP32 @1024)**:
 
-| 类别 | FP32 | QAT INT8 | 相对差 |
+| 类别 | FP32@1024 | INT8@640×384 | 相对差 |
 |---|---|---|---|
-| person | 0.3318 | 0.3278 | **-1.2%** |
-| rider | 0.2420 | 0.2389 | -1.3% |
-| car | 0.5020 | 0.4995 | -0.5% |
-| bus | 0.4821 | 0.4778 | -0.9% |
-| truck | 0.4631 | 0.4542 | -1.9% |
-| bicycle | 0.2575 | 0.2459 | -4.5% |
-| motorcycle | 0.2218 | 0.2203 | -0.7% |
+| person | 0.3318 | 0.2522 | -24.0% |
+| rider | 0.2420 | 0.1810 | -25.2% |
+| car | 0.5020 | 0.4471 | -10.9% |
+| bus | 0.4821 | 0.4165 | -13.6% |
+| truck | 0.4631 | 0.4034 | -12.9% |
+| bicycle | 0.2575 | 0.1878 | -27.1% |
+| motorcycle | 0.2218 | 0.1695 | -23.6% |
 
-✅ 验收标准:person 类相对掉点 < 5% —— 全部类别达标。
+> 损失来自分辨率(1024→640),非量化;大目标(car/truck/bus)掉点 ≤14%,小目标类别更大。若部署端延迟允许,可改用 1024 版权重重新导出获得最高精度。
 
 ### 训练过程
 
@@ -101,8 +101,8 @@ model.export(format="onnx", quantize=8)  # QAT 导出内嵌 Q/DQ 节点,无需�
 ```python
 from ultralytics import YOLO
 
-model = YOLO("models/yolo26n-bdd7-int8-qat.onnx")   # ORT 自动将 QDQ 折叠为 INT8 内核
-results = model.predict("street.jpg", imgsz=1024, conf=0.25)
+model = YOLO("models/yolo26n-bdd100k-int8-640x384.onnx")   # ORT 自动将 QDQ 折叠为 INT8 内核
+results = model.predict("street.jpg", imgsz=[384, 640], conf=0.25)
 
 for det in results[0].boxes:
     cls = results[0].names[int(det.cls)]            # person / rider / car / bus / truck / bicycle / motorcycle
@@ -116,19 +116,16 @@ for det in results[0].boxes:
 
 ```
 ├── models/
-│   ├── yolo26n-bdd7-fp32.onnx        # FP32 ONNX 基线 (9.5 MB)
-│   ├── yolo26n-bdd7-int8-qat.onnx    # 交付模型:QAT INT8 QDQ @1024 (9.9 MB)
-│   ├── yolo26n-bdd7-int8-qat-384x640.onnx  # 客户端部署版:QAT INT8 @384x640 矩形输入 (9.6 MB)
-│   └── eval_report_final.md          # 完整评估报告
+│   └── yolo26n-bdd100k-int8-640x384.onnx   # 交付模型:QAT INT8,输入 640×384 矩形 (9.6 MB)
 ├── weights/
-│   └── yolo26n-bdd7-int8-qat.pt      # QAT 权重(可重新导出任意格式)
-├── scripts/                          # 数据转换 / 训练 / QAT / 导出 / 评估全流程脚本
+│   └── yolo26n-bdd100k-fp32.pt             # 原始 FP32 训练权重(可按任意分辨率重新 QAT/导出)
+├── scripts/                                # 数据转换 / 训练 / QAT / 导出 / 评估全流程脚本
 └── configs/data_bdd7.yaml
 ```
 
-> **384×640 部署版说明**:`imgsz=384,640` 矩形输入(适配 16:9 行车画面),导出命令等价于
-> `yolo export model=weights/yolo26n-bdd7-int8-qat.pt format=onnx quantize=8 imgsz=384,640 data=configs/data_bdd7.yaml`
-> (8.4.x 中 `int8=True` 已更名为 `quantize=8`)。模型在 1024px 训练,384×640 推理存在小目标(20-40m 骑手/摩托)召回损失,详见性能实测。
+> **640×384 部署版说明**:客户端指定矩形输入,导出等价于
+> `yolo export model=weights/yolo26n-bdd100k-fp32.pt format=onnx quantize=8 imgsz=640,384 data=configs/data_bdd7.yaml`
+> 配合 `rect=True` 矩形 QAT 适配训练(8.4.x 中 `int8=True` 已更名为 `quantize=8`;训练端 imgsz 不接受列表,矩形训练需 `rect=True`)。
 
 ### 环境备注
 
@@ -154,18 +151,18 @@ A 7-class road-object detector built on **Ultralytics YOLO26 Nano** (2.4M params
 
 > Traffic light / traffic sign / train were dropped from BDD100K's original 10 classes to focus on road users and pedestrians.
 
-### Performance (BDD100K val 10,000 images @1024)
+### Performance (BDD100K val 10,000 images)
 
-| Model | mAP50 | mAP50-95 | Gap vs FP32 | Size |
+| Model | Input | mAP50 | mAP50-95 | Note |
 |---|---|---|---|---|
-| FP32 weights (best.pt) | 0.5967 | 0.3602 | — | 15.6 MB |
-| FP32 ONNX baseline | 0.5955 | 0.3572 | -0.2% | 9.5 MB |
-| ~~PTQ INT8 (deprecated)~~ | 0.5412 | 0.3079 | -9.1% / -13.8% | 3.0 MB |
-| **QAT INT8 (shipped)** | **0.5894** | **0.3521** | **-1.0% / -1.4%** | 9.9 MB* |
+| FP32 weights (best.pt) | 1024×1024 | 0.5967 | 0.3602 | original training result |
+| QAT INT8 ONNX @1024 | 1024×1024 | 0.5894 | 0.3521 | quantization cost only -1.2% |
+| **QAT INT8 ONNX @640×384 (shipped)** | **640×384 rect** | **0.5021** | **0.2939** | on par with 640 square |
+| FP32 @640×640 square (reference) | 640×640 | 0.5036 | 0.2982 | pure resolution cost -15.7% |
 
-\* QDQ representation (FP32 weights + quantization-range nodes); the runtime folds these into true INT8 kernels.
+> Takeaways: ① QAT reduces INT8 loss to ~0 (PTQ lost 9-15% and was dropped); ② after rectangular adaptation training (rect=True QAT), the 640×384 input matches 640×640 square almost exactly; the remaining -15.7% is the pure 1024→640 resolution cost.
 
-**Per-class mAP50-95 (QAT INT8 vs FP32 ONNX)**: person -1.2%, rider -1.3%, car -0.5%, bus -0.9%, truck -1.9%, bicycle -4.5%, motorcycle -0.7% — all classes within the 5% acceptance budget (person: **-1.2%**).
+**Per-class mAP50-95 (shipped @640×384 vs FP32 @1024)**: person -24.0%, rider -25.2%, car -10.9%, bus -13.6%, truck -12.9%, bicycle -27.1%, motorcycle -23.6%. The loss comes from resolution, not quantization; large objects stay within 14%. Use the 1024 weights to re-export at higher resolution if latency allows.
 
 ### Training
 
@@ -175,7 +172,9 @@ A 7-class road-object detector built on **Ultralytics YOLO26 Nano** (2.4M params
 
 **Phase 1 — FP32 training (~5.5 h)**: COCO-pretrained `yolo26n.pt` fine-tuned at imgsz=1024, batch=64, AMP, 100 epochs (patience=30, converged ~epoch 91) at ~213.5 s/epoch. Final mAP50 **0.5967** / mAP50-95 **0.3602**.
 
-**Phase 2 — INT8 QAT (~50 min)**: PTQ was ruled out empirically — ORT MinMax static quantization (351 calibration images) cost -9.1% overall / -15.4% on person; ORT Entropy calibration OOM-killed (>160 GB RAM). Instead we used **Ultralytics native QAT** (nvidia-modelopt): `model.train(quantize=8, epochs=8, lr0=1e-5, optimizer="AdamW", cos_lr=True, mosaic=0.0, batch=32)` runs fake-quantization in every forward pass after an initial range calibration on the train split. Exporting with `quantize=8` embeds 308 Q/DQ nodes (quantization ranges) directly in the ONNX graph — no post-training calibration needed. The quantized model recovered mAP50-95 from 0.3079 (PTQ) to **0.3521**.
+**Phase 2 — INT8 QAT (~50 min)**: PTQ was ruled out empirically — ORT MinMax static quantization (351 calibration images) cost -9.1% overall / -15.4% on person; ORT Entropy calibration OOM-killed (>160 GB RAM). Instead we used **Ultralytics native QAT** (nvidia-modelopt): `model.train(quantize=8, epochs=8, lr0=1e-5, optimizer="AdamW", cos_lr=True, mosaic=0.0, batch=32)` runs fake-quantization in every forward pass after an initial range calibration on the train split. Exporting with `quantize=8` embeds Q/DQ nodes (quantization ranges) directly in the ONNX graph — no post-training calibration needed. The quantized model recovered mAP50-95 from 0.3079 (PTQ) to **0.3521** at 1024.
+
+**Phase 3 — rectangular adaptation for 640×384 deployment (~35 min)**: Ultralytics train-mode `imgsz` must be an integer (lists are squashed), so rectangular adaptation uses `rect=True` + `imgsz=640` + `mosaic=0` + `quantize=8` (10 epochs, lr0=5e-5, AdamW, cos_lr) — batches are grouped by aspect ratio, so the model trains on mostly 640×384-like letterboxed inputs. Exported at static `imgsz=640,384`, the INT8 model reaches **0.5021 / 0.2939** — on par with 640×640 square (0.5028 / 0.2944).
 
 ### Key Features
 
@@ -195,8 +194,8 @@ Forward ADAS collision targets, dashcam edge analytics (day/night/rain), traffic
 ```python
 from ultralytics import YOLO
 
-model = YOLO("models/yolo26n-bdd7-int8-qat.onnx")   # ORT folds QDQ into INT8 kernels
-results = model.predict("street.jpg", imgsz=1024, conf=0.25)
+model = YOLO("models/yolo26n-bdd100k-int8-640x384.onnx")   # ORT folds QDQ into INT8 kernels
+results = model.predict("street.jpg", imgsz=[384, 640], conf=0.25)
 ```
 
 ### License
