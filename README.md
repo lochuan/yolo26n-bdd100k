@@ -117,13 +117,18 @@ for det in results[0].boxes:
 ```
 ├── models/
 │   ├── yolo26n-bdd7-fp32.onnx        # FP32 ONNX 基线 (9.5 MB)
-│   ├── yolo26n-bdd7-int8-qat.onnx    # 交付模型:QAT INT8 QDQ (9.9 MB)
+│   ├── yolo26n-bdd7-int8-qat.onnx    # 交付模型:QAT INT8 QDQ @1024 (9.9 MB)
+│   ├── yolo26n-bdd7-int8-qat-384x640.onnx  # 客户端部署版:QAT INT8 @384x640 矩形输入 (9.6 MB)
 │   └── eval_report_final.md          # 完整评估报告
 ├── weights/
 │   └── yolo26n-bdd7-int8-qat.pt      # QAT 权重(可重新导出任意格式)
 ├── scripts/                          # 数据转换 / 训练 / QAT / 导出 / 评估全流程脚本
 └── configs/data_bdd7.yaml
 ```
+
+> **384×640 部署版说明**:`imgsz=384,640` 矩形输入(适配 16:9 行车画面),导出命令等价于
+> `yolo export model=weights/yolo26n-bdd7-int8-qat.pt format=onnx quantize=8 imgsz=384,640 data=configs/data_bdd7.yaml`
+> (8.4.x 中 `int8=True` 已更名为 `quantize=8`)。模型在 1024px 训练,384×640 推理存在小目标(20-40m 骑手/摩托)召回损失,详见性能实测。
 
 ### 环境备注
 
