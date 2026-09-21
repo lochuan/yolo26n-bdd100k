@@ -116,9 +116,12 @@ for det in results[0].boxes:
 
 ```
 ├── models/
-│   └── yolo26n-bdd100k-int8-640x384.onnx   # 交付模型:QAT INT8,输入 640×384 矩形 (9.6 MB)
+│   ├── yolo26n-bdd100k-int8-640x384.onnx       # 交付模型:QAT INT8,输入 640×384 矩形 (9.6 MB)
+│   ├── yolo26n-bdd7-int8-384x640.onnx          # QAT INT8 @384×640(高×宽)— comma openpilot 专用 (9.5 MB)
+│   ├── yolo26n-bdd7-fp32-384x640.onnx          # FP32 导出 @384×640 (9.3 MB)
+│   └── yolo26n-bdd7-fp32-384x640-opset13.onnx  # 同上,opset 13 (9.3 MB)
 ├── weights/
-│   └── yolo26n-bdd100k-fp32.pt             # 原始 FP32 训练权重(可按任意分辨率重新 QAT/导出)
+│   └── yolo26n-bdd100k-fp32.pt                 # 原始 FP32 训练权重(可按任意分辨率重新 QAT/导出)
 ├── scripts/                                # 数据转换 / 训练 / QAT / 导出 / 评估全流程脚本
 └── configs/data_bdd7.yaml
 ```
@@ -126,6 +129,8 @@ for det in results[0].boxes:
 > **640×384 部署版说明**:客户端指定矩形输入,导出等价于
 > `yolo export model=weights/yolo26n-bdd100k-fp32.pt format=onnx quantize=8 imgsz=640,384 data=configs/data_bdd7.yaml`
 > 配合 `rect=True` 矩形 QAT 适配训练(8.4.x 中 `int8=True` 已更名为 `quantize=8`;训练端 imgsz 不接受列表,矩形训练需 `rect=True`)。
+>
+> **comma openpilot 专用**:`models/yolo26n-bdd7-int8-384x640.onnx`(输入 384×640,高×宽)为 comma openpilot 部署专用;文件名中 `640x384`(宽×高)与 `384x640`(高×宽)是同一矩形输入的两种命名习惯,并非两种分辨率。
 
 ### 环境备注
 
@@ -197,6 +202,8 @@ from ultralytics import YOLO
 model = YOLO("models/yolo26n-bdd100k-int8-640x384.onnx")   # ORT folds QDQ into INT8 kernels
 results = model.predict("street.jpg", imgsz=[384, 640], conf=0.25)
 ```
+
+> **comma openpilot note**: `models/yolo26n-bdd7-int8-384x640.onnx` (input 384×640, H×W) is dedicated to comma openpilot deployment. In filenames, `640x384` (W×H) and `384x640` (H×W) are two naming conventions for the same rectangular input, not two resolutions.
 
 ### License
 
